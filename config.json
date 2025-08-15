@@ -1,0 +1,46 @@
+{
+  "trading": {
+    "risk_amount": 50.0,
+    "max_daily_loss": 200.0,
+    "min_risk_reward": 2.0,
+    "max_spread_pips": 3.0,
+    "max_risk_percent": 5.0,
+    "magic_number": 234567
+  },
+  "analysis": {
+    "lookback_period": 20,
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+    "support_resistance_touches": 2,
+    "candle_body_threshold": 1.5
+  },
+  "symbols": [
+    {
+      "name": "EURUSD",
+      "enabled": true,
+      "max_spread": 0.0003,
+      "timeframe": "M1"
+    },
+    {
+      "name": "GBPUSD", 
+      "enabled": true,
+      "max_spread": 0.0004,
+      "timeframe": "M1"
+    }
+  ],
+  "logging": {
+    "enabled": true,
+    "level": "INFO",
+    "log_trades": true,
+    "log_analysis": false
+  },
+  "mt5": {
+    "terminal_paths": [
+      "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+      "C:\\Program Files (x86)\\MetaTrader 5\\terminal64.exe"
+    ],
+    "connection_timeout": 60,
+    "retry_attempts": 3
+  }
+}
