@@ -132,7 +132,11 @@ void OnTick()
 bool CheckMACD()
   {
    double macdMain[], macdSignal[];
-   
+
+   // Index 0 is the current bar (MQL5 copies oldest first otherwise)
+   ArraySetAsSeries(macdMain, true);
+   ArraySetAsSeries(macdSignal, true);
+
    // Copy MACD values
    if(CopyBuffer(macdHandle, 0, 0, 3, macdMain) < 0 ||
       CopyBuffer(macdHandle, 1, 0, 3, macdSignal) < 0)
@@ -163,7 +167,13 @@ bool CheckMACD()
 bool DetectBearishZone()
   {
    double open[], close[], high[], low[];
-   
+
+   // Index 0 is the current bar (MQL5 copies oldest first otherwise)
+   ArraySetAsSeries(open, true);
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+
    // Get more candles for better analysis
    if(CopyOpen(Symbol(), PERIOD_M1, 0, 10, open) < 0 ||
       CopyClose(Symbol(), PERIOD_M1, 0, 10, close) < 0 ||
