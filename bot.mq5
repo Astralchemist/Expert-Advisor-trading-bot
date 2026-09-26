@@ -12,7 +12,7 @@ input int PendingExpiryMinutes = 30;   // Cancel unfilled sell limits after this
 //+------------------------------------------------------------------+
 //| Global Variables                                                 |
 //+------------------------------------------------------------------+
-double dailyStartBalance;
+double dailyStartEquity;
 datetime dailyStartDay = 0;
 bool tradingEnabled = true;
 int macdHandle;
@@ -31,7 +31,7 @@ int OnInit()
       return(INIT_FAILED);
      }
    
-   // Store daily start balance (restored if the EA restarted mid-day)
+   // Store daily start equity (restored if the EA restarted mid-day)
    LoadDailyState();
 
    // Validate inputs
@@ -59,7 +59,7 @@ void OnDeinit(const int reason)
 void OnTick()
   {
    // Start a new daily loss window when the server day rolls over
-   ResetDailyBalanceIfNewDay();
+   ResetDailyEquityIfNewDay();
 
    // Manage existing positions before any check below can return early
    ManagePositions();
@@ -68,7 +68,9 @@ void OnTick()
    if(!CheckDailyLossLimit())
      {
       tradingEnabled = false;
-      // Resting sell limits could still fill after the limit is hit
+      // Open losses count toward the limit, so stop them growing, and
+      // resting sell limits could still fill after the limit is hit
+      ClosePositions();
       DeletePendingOrders(0);
       return;
      }
@@ -436,8 +438,8 @@ double CalculateLotSize(double riskAmount, double stopLoss, double entryPrice)
 //+------------------------------------------------------------------+
 bool CheckDailyLossLimit()
   {
-   double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double dailyLoss = dailyStartBalance - currentBalance;
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double dailyLoss = dailyStartEquity - currentEquity;
    
    if(dailyLoss >= MaxDailyLoss)
      {
@@ -456,21 +458,21 @@ datetime CurrentServerDay()
    return (datetime)((long)TimeCurrent() / 86400 * 86400);
   }
 //+------------------------------------------------------------------+
-//| Function to reset daily start balance on a new server day        |
+//| Function to reset daily start equity on a new server day         |
 //+------------------------------------------------------------------+
-void ResetDailyBalanceIfNewDay()
+void ResetDailyEquityIfNewDay()
   {
    datetime today = CurrentServerDay();
    if(today == dailyStartDay)
       return;
 
    dailyStartDay = today;
-   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    tradingEnabled = true;
    SaveDailyState();
 
    if(EnableLogging)
-      Print("New trading day. Daily start balance reset to ", dailyStartBalance);
+      Print("New trading day. Daily start equity reset to ", dailyStartEquity);
   }
 //+------------------------------------------------------------------+
 //| Function to build the terminal global variable name prefix       |
@@ -481,33 +483,33 @@ string DailyStatePrefix()
           Symbol() + "_" + IntegerToString(MagicNumber) + "_";
   }
 //+------------------------------------------------------------------+
-//| Function to save the daily start balance so restarts keep it     |
+//| Function to save the daily start equity so restarts keep it      |
 //+------------------------------------------------------------------+
 void SaveDailyState()
   {
    GlobalVariableSet(DailyStatePrefix() + "Day", (double)dailyStartDay);
-   GlobalVariableSet(DailyStatePrefix() + "StartBalance", dailyStartBalance);
+   GlobalVariableSet(DailyStatePrefix() + "StartEquity", dailyStartEquity);
   }
 //+------------------------------------------------------------------+
-//| Function to restore today's start balance, or start a new day    |
+//| Function to restore today's start equity, or start a new day     |
 //+------------------------------------------------------------------+
 void LoadDailyState()
   {
    string dayVar = DailyStatePrefix() + "Day";
-   string balanceVar = DailyStatePrefix() + "StartBalance";
+   string equityVar = DailyStatePrefix() + "StartEquity";
 
-   if(GlobalVariableCheck(dayVar) && GlobalVariableCheck(balanceVar) &&
+   if(GlobalVariableCheck(dayVar) && GlobalVariableCheck(equityVar) &&
       (datetime)GlobalVariableGet(dayVar) == CurrentServerDay())
      {
       dailyStartDay = (datetime)GlobalVariableGet(dayVar);
-      dailyStartBalance = GlobalVariableGet(balanceVar);
+      dailyStartEquity = GlobalVariableGet(equityVar);
       if(EnableLogging)
-         Print("Restored daily start balance ", dailyStartBalance, " from earlier today");
+         Print("Restored daily start equity ", dailyStartEquity, " from earlier today");
       return;
      }
 
    dailyStartDay = CurrentServerDay();
-   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    SaveDailyState();
   }
 //+------------------------------------------------------------------+
@@ -557,6 +559,43 @@ void DeletePendingOrders(int olderThanSeconds)
         }
       else if(EnableLogging)
          Print("Pending order deleted: ", ticket);
+     }
+  }
+//+------------------------------------------------------------------+
+//| Function to close this EA's open positions on the current symbol |
+//+------------------------------------------------------------------+
+void ClosePositions()
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 ||
+         PositionGetString(POSITION_SYMBOL) != Symbol() ||
+         PositionGetInteger(POSITION_MAGIC) != MagicNumber)
+         continue;
+
+      bool isSell = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL;
+
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+
+      request.action = TRADE_ACTION_DEAL;
+      request.symbol = Symbol();
+      request.position = ticket;
+      request.volume = PositionGetDouble(POSITION_VOLUME);
+      request.type = isSell ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      request.price = isSell ? SymbolInfoDouble(Symbol(), SYMBOL_ASK) : SymbolInfoDouble(Symbol(), SYMBOL_BID);
+      request.deviation = 10;
+      request.magic = MagicNumber;
+      request.type_filling = GetFillingMode();
+
+      if(!OrderSend(request, result))
+        {
+         if(EnableLogging)
+            Print("Failed to close position ", ticket, ". Error: ", GetLastError(), ", Retcode: ", result.retcode);
+        }
+      else if(EnableLogging)
+         Print("Position closed: ", ticket);
      }
   }
 //+------------------------------------------------------------------+

@@ -12,7 +12,7 @@ An MQL5 Expert Advisor that places sell limit orders at resistance on the 1-minu
 
 ### Risk Management
 - **Position Sizing**: Lot size from `RiskAmount` and the stop distance, capped at 5% of account equity
-- **Daily Loss Limit**: Trading halts when the balance falls `MaxDailyLoss` below the start-of-day balance; resets each server day and survives EA restarts. Open losses count only once closed.
+- **Daily Loss Limit**: Trading halts and open positions are closed when equity falls `MaxDailyLoss` below the start-of-day equity; open losses count. Resets each server day and survives EA restarts.
 - **Spread Filter**: Skips signals when the spread is above 0.0003 in price, 3 pips on EURUSD/GBPUSD (fixed in the code)
 - **Breakeven Management**: Moves the stop loss to entry at 1:1 R:R
 - **Risk Cap**: Maximum 5% account risk per trade (fixed in the code)
@@ -131,7 +131,7 @@ The bot scans for:
 - **Minimum/Maximum Lots**: Respects broker limitations
 
 ### Loss Protection
-- **Daily Loss Limit**: Trading halts when the day's realized loss reaches `MaxDailyLoss`, and resting sell limits are cancelled
+- **Daily Loss Limit**: When the day's loss on equity, open trades included, reaches `MaxDailyLoss`, trading halts, open positions are closed and resting sell limits are cancelled
 - **Spread Monitoring**: Spread checked before each signal
 - **Error Handling**: Failed orders and data errors are logged
 
