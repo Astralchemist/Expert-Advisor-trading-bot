@@ -62,6 +62,9 @@ void OnTick()
    // Start a new daily loss window when the server day rolls over
    ResetDailyBalanceIfNewDay();
 
+   // Manage existing positions before any check below can return early
+   ManagePositions();
+
    // Check daily loss limit
    if(!CheckDailyLossLimit())
      {
@@ -122,9 +125,6 @@ void OnTick()
       // Set Sell Limit at supply zone
       SetSellLimit(supportLevel, resistanceLevel);
      }
-   
-   // Manage existing positions
-   ManagePositions();
   }
 //+------------------------------------------------------------------+
 //| Function to check MACD confirmation                              |
