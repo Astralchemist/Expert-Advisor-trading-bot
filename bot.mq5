@@ -31,9 +31,8 @@ int OnInit()
       return(INIT_FAILED);
      }
    
-   // Store daily start balance
-   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   dailyStartDay = CurrentServerDay();
+   // Store daily start balance (restored if the EA restarted mid-day)
+   LoadDailyState();
 
    // Validate inputs
    if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0)
@@ -454,9 +453,48 @@ void ResetDailyBalanceIfNewDay()
    dailyStartDay = today;
    dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    tradingEnabled = true;
+   SaveDailyState();
 
    if(EnableLogging)
       Print("New trading day. Daily start balance reset to ", dailyStartBalance);
+  }
+//+------------------------------------------------------------------+
+//| Function to build the terminal global variable name prefix       |
+//+------------------------------------------------------------------+
+string DailyStatePrefix()
+  {
+   return "EA_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_" +
+          Symbol() + "_" + IntegerToString(MagicNumber) + "_";
+  }
+//+------------------------------------------------------------------+
+//| Function to save the daily start balance so restarts keep it     |
+//+------------------------------------------------------------------+
+void SaveDailyState()
+  {
+   GlobalVariableSet(DailyStatePrefix() + "Day", (double)dailyStartDay);
+   GlobalVariableSet(DailyStatePrefix() + "StartBalance", dailyStartBalance);
+  }
+//+------------------------------------------------------------------+
+//| Function to restore today's start balance, or start a new day    |
+//+------------------------------------------------------------------+
+void LoadDailyState()
+  {
+   string dayVar = DailyStatePrefix() + "Day";
+   string balanceVar = DailyStatePrefix() + "StartBalance";
+
+   if(GlobalVariableCheck(dayVar) && GlobalVariableCheck(balanceVar) &&
+      (datetime)GlobalVariableGet(dayVar) == CurrentServerDay())
+     {
+      dailyStartDay = (datetime)GlobalVariableGet(dayVar);
+      dailyStartBalance = GlobalVariableGet(balanceVar);
+      if(EnableLogging)
+         Print("Restored daily start balance ", dailyStartBalance, " from earlier today");
+      return;
+     }
+
+   dailyStartDay = CurrentServerDay();
+   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   SaveDailyState();
   }
 //+------------------------------------------------------------------+
 //| Function to count this EA's pending orders on the current symbol |
