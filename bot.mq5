@@ -8,12 +8,15 @@ input double MinRiskReward = 2.0;      // Minimum risk:reward ratio
 input int MagicNumber = 234567;        // Unique EA identifier
 input bool EnableLogging = true;       // Enable detailed logging
 input int PendingExpiryMinutes = 30;   // Cancel unfilled sell limits after this many minutes
+input double MaxDrawdownPercent = 15.0; // Stop for good if equity falls this % below its peak
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                 |
 //+------------------------------------------------------------------+
 double dailyStartEquity;
 datetime dailyStartDay = 0;
+double peakEquity = 0;
+bool killSwitchTripped = false;
 bool tradingEnabled = true;
 int macdHandle;
 datetime lastTradeTime = 0;
@@ -34,8 +37,12 @@ int OnInit()
    // Store daily start equity (restored if the EA restarted mid-day)
    LoadDailyState();
 
+   // Restore the equity peak and whether the kill switch has tripped
+   LoadKillSwitchState();
+
    // Validate inputs
-   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0)
+   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0 ||
+      MaxDrawdownPercent <= 0 || MaxDrawdownPercent >= 100)
      {
       Print("Invalid input parameters");
       return(INIT_FAILED);
@@ -60,6 +67,14 @@ void OnTick()
   {
    // Start a new daily loss window when the server day rolls over
    ResetDailyEquityIfNewDay();
+
+   // Stop for good once equity falls too far below its peak
+   if(!CheckDrawdownKillSwitch())
+     {
+      ClosePositions();
+      DeletePendingOrders(0);
+      return;
+     }
 
    // Manage existing positions before any check below can return early
    ManagePositions();
@@ -477,7 +492,7 @@ void ResetDailyEquityIfNewDay()
 //+------------------------------------------------------------------+
 //| Function to build the terminal global variable name prefix       |
 //+------------------------------------------------------------------+
-string DailyStatePrefix()
+string StatePrefix()
   {
    return "EA_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_" +
           Symbol() + "_" + IntegerToString(MagicNumber) + "_";
@@ -487,16 +502,16 @@ string DailyStatePrefix()
 //+------------------------------------------------------------------+
 void SaveDailyState()
   {
-   GlobalVariableSet(DailyStatePrefix() + "Day", (double)dailyStartDay);
-   GlobalVariableSet(DailyStatePrefix() + "StartEquity", dailyStartEquity);
+   GlobalVariableSet(StatePrefix() + "Day", (double)dailyStartDay);
+   GlobalVariableSet(StatePrefix() + "StartEquity", dailyStartEquity);
   }
 //+------------------------------------------------------------------+
 //| Function to restore today's start equity, or start a new day     |
 //+------------------------------------------------------------------+
 void LoadDailyState()
   {
-   string dayVar = DailyStatePrefix() + "Day";
-   string equityVar = DailyStatePrefix() + "StartEquity";
+   string dayVar = StatePrefix() + "Day";
+   string equityVar = StatePrefix() + "StartEquity";
 
    if(GlobalVariableCheck(dayVar) && GlobalVariableCheck(equityVar) &&
       (datetime)GlobalVariableGet(dayVar) == CurrentServerDay())
@@ -511,6 +526,53 @@ void LoadDailyState()
    dailyStartDay = CurrentServerDay();
    dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    SaveDailyState();
+  }
+//+------------------------------------------------------------------+
+//| Function to restore the equity peak and kill switch state        |
+//+------------------------------------------------------------------+
+void LoadKillSwitchState()
+  {
+   string peakVar = StatePrefix() + "PeakEquity";
+   string killVar = StatePrefix() + "KillSwitch";
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   peakEquity = equity;
+   if(GlobalVariableCheck(peakVar))
+      peakEquity = MathMax(GlobalVariableGet(peakVar), equity);
+   GlobalVariableSet(peakVar, peakEquity);
+
+   killSwitchTripped = GlobalVariableCheck(killVar) && GlobalVariableGet(killVar) != 0;
+   if(killSwitchTripped)
+      Print("Drawdown kill switch is tripped. Delete global variables ", killVar,
+            " and ", peakVar, " to trade again");
+  }
+//+------------------------------------------------------------------+
+//| Function to check equity drawdown from its peak                  |
+//+------------------------------------------------------------------+
+bool CheckDrawdownKillSwitch()
+  {
+   if(killSwitchTripped)
+      return false;
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equity > peakEquity)
+     {
+      peakEquity = equity;
+      GlobalVariableSet(StatePrefix() + "PeakEquity", peakEquity);
+     }
+
+   if(peakEquity <= 0)
+      return true;
+
+   double drawdownPercent = (peakEquity - equity) / peakEquity * 100.0;
+   if(drawdownPercent < MaxDrawdownPercent)
+      return true;
+
+   killSwitchTripped = true;
+   GlobalVariableSet(StatePrefix() + "KillSwitch", 1);
+   Print("Drawdown kill switch tripped: equity ", equity, " is ", drawdownPercent,
+         "% below peak ", peakEquity, ". Trading stopped until reset");
+   return false;
   }
 //+------------------------------------------------------------------+
 //| Function to count this EA's pending orders on the current symbol |

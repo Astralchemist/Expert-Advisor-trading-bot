@@ -108,6 +108,7 @@ pip install MetaTrader5
 | MagicNumber | 234567 | Unique EA identifier |
 | EnableLogging | true | Enable detailed logging |
 | PendingExpiryMinutes | 30 | Cancel unfilled sell limits after this many minutes |
+| MaxDrawdownPercent | 15.0 | Stop for good if equity falls this % below its peak |
 
 ### Trading Conditions
 The bot scans for:
@@ -132,8 +133,12 @@ The bot scans for:
 
 ### Loss Protection
 - **Daily Loss Limit**: When the day's loss on equity, open trades included, reaches `MaxDailyLoss`, trading halts, open positions are closed and resting sell limits are cancelled
+- **Drawdown Kill Switch**: When equity falls `MaxDrawdownPercent` below its highest point, the EA closes its positions, cancels its sell limits and stops trading for good. It stays stopped across restarts and new days. Withdrawals lower equity too, so they count toward the drawdown.
 - **Spread Monitoring**: Spread checked before each signal
 - **Error Handling**: Failed orders and data errors are logged
+
+### Resetting the Kill Switch
+The kill switch only resets by hand. In MetaTrader 5 open Tools → Global Variables (F3) and delete both `EA_<login>_<symbol>_<magic>_KillSwitch` and `EA_<login>_<symbol>_<magic>_PeakEquity`, then restart the EA. Deleting only the first one trips it again straight away, because the old peak is still stored.
 
 ### Trade Management
 - **Breakeven Automation**: SL moved to entry when 1:1 R:R achieved
