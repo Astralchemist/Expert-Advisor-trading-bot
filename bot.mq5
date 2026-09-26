@@ -8,12 +8,15 @@ input double MinRiskReward = 2.0;      // Minimum risk:reward ratio
 input int MagicNumber = 234567;        // Unique EA identifier
 input bool EnableLogging = true;       // Enable detailed logging
 input int PendingExpiryMinutes = 30;   // Cancel unfilled sell limits after this many minutes
+input double MaxDrawdownPercent = 15.0; // Stop for good if equity falls this % below its peak
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                 |
 //+------------------------------------------------------------------+
-double dailyStartBalance;
+double dailyStartEquity;
 datetime dailyStartDay = 0;
+double peakEquity = 0;
+bool killSwitchTripped = false;
 bool tradingEnabled = true;
 int macdHandle;
 datetime lastTradeTime = 0;
@@ -31,12 +34,15 @@ int OnInit()
       return(INIT_FAILED);
      }
    
-   // Store daily start balance
-   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   dailyStartDay = CurrentServerDay();
+   // Store daily start equity (restored if the EA restarted mid-day)
+   LoadDailyState();
+
+   // Restore the equity peak and whether the kill switch has tripped
+   LoadKillSwitchState();
 
    // Validate inputs
-   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0)
+   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0 ||
+      MaxDrawdownPercent <= 0 || MaxDrawdownPercent >= 100)
      {
       Print("Invalid input parameters");
       return(INIT_FAILED);
@@ -60,13 +66,26 @@ void OnDeinit(const int reason)
 void OnTick()
   {
    // Start a new daily loss window when the server day rolls over
-   ResetDailyBalanceIfNewDay();
+   ResetDailyEquityIfNewDay();
+
+   // Stop for good once equity falls too far below its peak
+   if(!CheckDrawdownKillSwitch())
+     {
+      ClosePositions();
+      DeletePendingOrders(0);
+      return;
+     }
+
+   // Manage existing positions before any check below can return early
+   ManagePositions();
 
    // Check daily loss limit
    if(!CheckDailyLossLimit())
      {
       tradingEnabled = false;
-      // Resting sell limits could still fill after the limit is hit
+      // Open losses count toward the limit, so stop them growing, and
+      // resting sell limits could still fill after the limit is hit
+      ClosePositions();
       DeletePendingOrders(0);
       return;
      }
@@ -122,9 +141,6 @@ void OnTick()
       // Set Sell Limit at supply zone
       SetSellLimit(supportLevel, resistanceLevel);
      }
-   
-   // Manage existing positions
-   ManagePositions();
   }
 //+------------------------------------------------------------------+
 //| Function to check MACD confirmation                              |
@@ -132,7 +148,11 @@ void OnTick()
 bool CheckMACD()
   {
    double macdMain[], macdSignal[];
-   
+
+   // Index 0 is the current bar (MQL5 copies oldest first otherwise)
+   ArraySetAsSeries(macdMain, true);
+   ArraySetAsSeries(macdSignal, true);
+
    // Copy MACD values
    if(CopyBuffer(macdHandle, 0, 0, 3, macdMain) < 0 ||
       CopyBuffer(macdHandle, 1, 0, 3, macdSignal) < 0)
@@ -163,7 +183,13 @@ bool CheckMACD()
 bool DetectBearishZone()
   {
    double open[], close[], high[], low[];
-   
+
+   // Index 0 is the current bar (MQL5 copies oldest first otherwise)
+   ArraySetAsSeries(open, true);
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+
    // Get more candles for better analysis
    if(CopyOpen(Symbol(), PERIOD_M1, 0, 10, open) < 0 ||
       CopyClose(Symbol(), PERIOD_M1, 0, 10, close) < 0 ||
@@ -332,8 +358,8 @@ void SetSellLimit(double support, double resistance)
    request.tp = takeProfit;
    request.magic = MagicNumber;
    request.comment = "EA Sell Limit";
-   request.type_filling = ORDER_FILLING_IOC;
-   
+   request.type_filling = GetFillingMode();
+
    // Send order
    if(!OrderSend(request, result))
      {
@@ -346,6 +372,20 @@ void SetSellLimit(double support, double resistance)
       if(EnableLogging)
          Print("Sell limit order placed. Ticket: ", result.order, ", Entry: ", entryPrice, ", SL: ", stopLoss, ", TP: ", takeProfit);
      }
+  }
+//+------------------------------------------------------------------+
+//| Function to pick a filling mode the broker allows for the symbol |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING GetFillingMode()
+  {
+   long filling = SymbolInfoInteger(Symbol(), SYMBOL_FILLING_MODE);
+
+   // Keep IOC where the broker allows it, else fall back
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      return ORDER_FILLING_IOC;
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      return ORDER_FILLING_FOK;
+   return ORDER_FILLING_RETURN;
   }
 //+------------------------------------------------------------------+
 //| Function to calculate lot size based on risk with validation     |
@@ -413,8 +453,8 @@ double CalculateLotSize(double riskAmount, double stopLoss, double entryPrice)
 //+------------------------------------------------------------------+
 bool CheckDailyLossLimit()
   {
-   double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double dailyLoss = dailyStartBalance - currentBalance;
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double dailyLoss = dailyStartEquity - currentEquity;
    
    if(dailyLoss >= MaxDailyLoss)
      {
@@ -433,20 +473,106 @@ datetime CurrentServerDay()
    return (datetime)((long)TimeCurrent() / 86400 * 86400);
   }
 //+------------------------------------------------------------------+
-//| Function to reset daily start balance on a new server day        |
+//| Function to reset daily start equity on a new server day         |
 //+------------------------------------------------------------------+
-void ResetDailyBalanceIfNewDay()
+void ResetDailyEquityIfNewDay()
   {
    datetime today = CurrentServerDay();
    if(today == dailyStartDay)
       return;
 
    dailyStartDay = today;
-   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    tradingEnabled = true;
+   SaveDailyState();
 
    if(EnableLogging)
-      Print("New trading day. Daily start balance reset to ", dailyStartBalance);
+      Print("New trading day. Daily start equity reset to ", dailyStartEquity);
+  }
+//+------------------------------------------------------------------+
+//| Function to build the terminal global variable name prefix       |
+//+------------------------------------------------------------------+
+string StatePrefix()
+  {
+   return "EA_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_" +
+          Symbol() + "_" + IntegerToString(MagicNumber) + "_";
+  }
+//+------------------------------------------------------------------+
+//| Function to save the daily start equity so restarts keep it      |
+//+------------------------------------------------------------------+
+void SaveDailyState()
+  {
+   GlobalVariableSet(StatePrefix() + "Day", (double)dailyStartDay);
+   GlobalVariableSet(StatePrefix() + "StartEquity", dailyStartEquity);
+  }
+//+------------------------------------------------------------------+
+//| Function to restore today's start equity, or start a new day     |
+//+------------------------------------------------------------------+
+void LoadDailyState()
+  {
+   string dayVar = StatePrefix() + "Day";
+   string equityVar = StatePrefix() + "StartEquity";
+
+   if(GlobalVariableCheck(dayVar) && GlobalVariableCheck(equityVar) &&
+      (datetime)GlobalVariableGet(dayVar) == CurrentServerDay())
+     {
+      dailyStartDay = (datetime)GlobalVariableGet(dayVar);
+      dailyStartEquity = GlobalVariableGet(equityVar);
+      if(EnableLogging)
+         Print("Restored daily start equity ", dailyStartEquity, " from earlier today");
+      return;
+     }
+
+   dailyStartDay = CurrentServerDay();
+   dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   SaveDailyState();
+  }
+//+------------------------------------------------------------------+
+//| Function to restore the equity peak and kill switch state        |
+//+------------------------------------------------------------------+
+void LoadKillSwitchState()
+  {
+   string peakVar = StatePrefix() + "PeakEquity";
+   string killVar = StatePrefix() + "KillSwitch";
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   peakEquity = equity;
+   if(GlobalVariableCheck(peakVar))
+      peakEquity = MathMax(GlobalVariableGet(peakVar), equity);
+   GlobalVariableSet(peakVar, peakEquity);
+
+   killSwitchTripped = GlobalVariableCheck(killVar) && GlobalVariableGet(killVar) != 0;
+   if(killSwitchTripped)
+      Print("Drawdown kill switch is tripped. Delete global variables ", killVar,
+            " and ", peakVar, " to trade again");
+  }
+//+------------------------------------------------------------------+
+//| Function to check equity drawdown from its peak                  |
+//+------------------------------------------------------------------+
+bool CheckDrawdownKillSwitch()
+  {
+   if(killSwitchTripped)
+      return false;
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equity > peakEquity)
+     {
+      peakEquity = equity;
+      GlobalVariableSet(StatePrefix() + "PeakEquity", peakEquity);
+     }
+
+   if(peakEquity <= 0)
+      return true;
+
+   double drawdownPercent = (peakEquity - equity) / peakEquity * 100.0;
+   if(drawdownPercent < MaxDrawdownPercent)
+      return true;
+
+   killSwitchTripped = true;
+   GlobalVariableSet(StatePrefix() + "KillSwitch", 1);
+   Print("Drawdown kill switch tripped: equity ", equity, " is ", drawdownPercent,
+         "% below peak ", peakEquity, ". Trading stopped until reset");
+   return false;
   }
 //+------------------------------------------------------------------+
 //| Function to count this EA's pending orders on the current symbol |
@@ -498,6 +624,43 @@ void DeletePendingOrders(int olderThanSeconds)
      }
   }
 //+------------------------------------------------------------------+
+//| Function to close this EA's open positions on the current symbol |
+//+------------------------------------------------------------------+
+void ClosePositions()
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 ||
+         PositionGetString(POSITION_SYMBOL) != Symbol() ||
+         PositionGetInteger(POSITION_MAGIC) != MagicNumber)
+         continue;
+
+      bool isSell = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL;
+
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+
+      request.action = TRADE_ACTION_DEAL;
+      request.symbol = Symbol();
+      request.position = ticket;
+      request.volume = PositionGetDouble(POSITION_VOLUME);
+      request.type = isSell ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      request.price = isSell ? SymbolInfoDouble(Symbol(), SYMBOL_ASK) : SymbolInfoDouble(Symbol(), SYMBOL_BID);
+      request.deviation = 10;
+      request.magic = MagicNumber;
+      request.type_filling = GetFillingMode();
+
+      if(!OrderSend(request, result))
+        {
+         if(EnableLogging)
+            Print("Failed to close position ", ticket, ". Error: ", GetLastError(), ", Retcode: ", result.retcode);
+        }
+      else if(EnableLogging)
+         Print("Position closed: ", ticket);
+     }
+  }
+//+------------------------------------------------------------------+
 //| Function to check if spread is acceptable                       |
 //+------------------------------------------------------------------+
 bool IsSpreadAcceptable()
@@ -533,11 +696,13 @@ void ManagePositions()
             
             if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
               {
-               double riskDistance = openPrice - stopLoss;
+               // A sell's stop loss sits above the entry
+               double riskDistance = stopLoss - openPrice;
                double currentProfit = openPrice - currentPrice;
-               
+
                // Move SL to breakeven when 1:1 RR is reached
-               if(currentProfit >= riskDistance && stopLoss != openPrice)
+               // (riskDistance <= 0 means no SL or already at breakeven)
+               if(riskDistance > 0 && currentProfit >= riskDistance)
                  {
                   MqlTradeRequest request = {};
                   MqlTradeResult result = {};

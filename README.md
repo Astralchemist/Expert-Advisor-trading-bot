@@ -1,46 +1,44 @@
 # Expert Advisor Trading Bot
 
-A professional-grade MQL5 Expert Advisor with advanced risk management, comprehensive error handling, and modern Python integration tools. This trading bot implements sophisticated technical analysis algorithms and defensive security measures for automated forex trading.
+An MQL5 Expert Advisor that places sell limit orders at resistance on the 1-minute chart, with fixed-risk position sizing, a daily loss limit and break-even stop management, plus Python helper scripts for connecting to MetaTrader 5.
 
 ## 🚀 Key Features
 
-### Advanced Trading Logic
-- **Modern MACD Analysis**: Uses current MQL5 syntax with proper indicator handles
-- **Fractal-Based Support/Resistance**: Intelligent price level detection using fractal analysis
-- **Enhanced Fair Value Gap Detection**: Sophisticated gap analysis with momentum confirmation
-- **Multi-Timeframe Analysis**: Configurable timeframe support beyond just 1-minute charts
+### Trading Logic
+- **MACD Analysis**: Uses an `iMACD` indicator handle (12, 26, 9)
+- **Fractal-Based Support/Resistance**: Swing highs and lows over the last `LookbackPeriod` candles, ranked by how often price touched them
+- **Fair Value Gap Check**: The low two candles back and the current candle's high must straddle the resistance level
+- **Fixed Timeframe**: All analysis runs on M1; the timeframe is fixed in the code
 
-### Risk Management & Security
-- **Dynamic Position Sizing**: Intelligent lot size calculation with account equity protection
-- **Daily Loss Limits**: Automatic trading halt when daily loss threshold is reached
-- **Spread Protection**: Real-time spread monitoring with configurable maximum limits
-- **Breakeven Management**: Automatic stop loss adjustment to breakeven at 1:1 R:R
-- **Account Safety**: Maximum 5% account risk per trade with validation
+### Risk Management
+- **Position Sizing**: Lot size from `RiskAmount` and the stop distance, capped at 5% of account equity
+- **Daily Loss Limit**: Trading halts and open positions are closed when equity falls `MaxDailyLoss` below the start-of-day equity; open losses count. Resets each server day and survives EA restarts.
+- **Spread Filter**: Skips signals when the spread is above 0.0003 in price, 3 pips on EURUSD/GBPUSD (fixed in the code)
+- **Breakeven Management**: Moves the stop loss to entry at 1:1 R:R
+- **Risk Cap**: Maximum 5% account risk per trade (fixed in the code)
 
-### Technical Improvements
-- **Comprehensive Error Handling**: Robust error detection and logging throughout
-- **Modern MQL5 Syntax**: Updated to use latest MetaTrader 5 functions and structures
-- **Input Validation**: All parameters validated before execution
-- **Memory Management**: Proper indicator handle management and cleanup
+### Technical Details
+- **Error Logging**: Indicator, price data and order errors are logged
+- **Modern MQL5 Syntax**: Uses current MetaTrader 5 functions and structures
+- **Input Validation**: Risk, loss limit, R:R and pending expiry inputs are checked on start
+- **Memory Management**: Indicator handle released on shutdown
 
 ## 📊 Trading Strategy
 
 ### Signal Generation
-- **Bearish Reversal Detection**: Advanced pattern recognition identifying significant bearish zones after bullish momentum
-- **Fractal Support/Resistance**: Multi-touch level validation using fractal analysis over configurable lookback periods
-- **Fair Value Gap Analysis**: Sophisticated gap detection with volume and momentum confirmation
-- **MACD Confluence**: Cross-validation using MACD histogram and signal line crossovers
+- **Bearish Reversal Detection**: At least 3 bullish candles 5 to 8 bars back, then a bearish current candle with a body over 1.5× the average of the previous 5
+- **Fractal Support/Resistance**: Levels touched most often within the lookback window
+- **Fair Value Gap Check**: Price range across the last three candles spans the resistance level
+- **MACD Confluence**: MACD main line crosses below the signal line on the current bar while falling
 
 ### Execution Logic
-- **Sell Limit Orders**: Strategic order placement at identified supply zones
-- **Dynamic Risk-Reward**: Configurable minimum R:R ratios (default 1:2)
-- **Spread Validation**: Real-time spread checking before order execution
-- **Duplicate Prevention**: Advanced logic to prevent multiple orders on same signal
+- **Sell Limit Orders**: Placed at the resistance level
+- **Risk-Reward**: Take profit at `MinRiskReward` × the entry-to-support distance (default 1:2)
+- **Spread Validation**: Spread checked before each signal
+- **Duplicate Prevention**: One open position or one resting sell limit at a time, a 60-second cooldown, and unfilled sell limits cancelled after `PendingExpiryMinutes`
 
 ### Position Management
-- **Breakeven Automation**: Automatic stop loss adjustment when trade reaches 1:1 R:R
-- **Trailing Stops**: Optional trailing stop functionality (configurable)
-- **Position Monitoring**: Real-time position tracking and management
+- **Breakeven Automation**: Stop loss moved to entry when the trade reaches 1:1 R:R
 
 ## 🛠️ Requirements
 
@@ -53,7 +51,6 @@ A professional-grade MQL5 Expert Advisor with advanced risk management, comprehe
 - Active MetaTrader 5 trading account
 - Algorithmic trading enabled
 - Sufficient margin for position sizing
-- DLL imports allowed (for enhanced functionality)
 
 ### System Requirements
 - Windows 10/11 (64-bit recommended)
@@ -89,8 +86,8 @@ pip install MetaTrader5
    - Enable AutoTrading (Ctrl+E)
 
 ### 4. Configuration
-1. Edit `config.json` to customize trading parameters
-2. Run `python config_manager.py` to validate configuration
+1. Set the EA's input parameters when attaching it to the chart (the EA does not read `config.json`)
+2. `config.json` is used only by the Python scripts; run `python config_manager.py` to validate it
 3. Test connection with `python init-test.py`
 
 ## 🎯 Usage
@@ -98,7 +95,7 @@ pip install MetaTrader5
 ### Quick Start
 1. **Initialize Connection**: Run `python mt5-init.py` to establish MT5 connection
 2. **Verify Account**: Run `python account-info.py` to check account status
-3. **Test Functionality**: Run `python test-function.py` to test order placement
+3. **Test Functionality**: Run `python test-function.py` to test order placement. **This places market orders (a BUY on EURUSD and a SELL on GBPUSD), so it refuses to run unless the logged-in account is a demo account.**
 4. **Attach EA**: Add Expert Advisor to your trading chart
 
 ### Expert Advisor Parameters
@@ -110,6 +107,8 @@ pip install MetaTrader5
 | MinRiskReward | 2.0 | Minimum risk:reward ratio |
 | MagicNumber | 234567 | Unique EA identifier |
 | EnableLogging | true | Enable detailed logging |
+| PendingExpiryMinutes | 30 | Cancel unfilled sell limits after this many minutes |
+| MaxDrawdownPercent | 15.0 | Stop for good if equity falls this % below its peak |
 
 ### Trading Conditions
 The bot scans for:
@@ -128,22 +127,23 @@ The bot scans for:
 ## ⚠️ Risk Management
 
 ### Position Sizing
-- **Dynamic Lot Calculation**: Based on account equity and risk percentage
-- **Maximum Risk**: 5% of account equity per trade (configurable)
+- **Lot Calculation**: Based on `RiskAmount` and the stop distance
+- **Maximum Risk**: 5% of account equity per trade (fixed in the code)
 - **Minimum/Maximum Lots**: Respects broker limitations
-- **Account Protection**: Validates against margin requirements
 
 ### Loss Protection
-- **Daily Loss Limits**: Automatic trading halt when threshold reached
-- **Spread Monitoring**: Real-time spread validation before execution
-- **Equity Protection**: Continuous account equity monitoring
-- **Error Handling**: Comprehensive error detection and response
+- **Daily Loss Limit**: When the day's loss on equity, open trades included, reaches `MaxDailyLoss`, trading halts, open positions are closed and resting sell limits are cancelled
+- **Drawdown Kill Switch**: When equity falls `MaxDrawdownPercent` below its highest point, the EA closes its positions, cancels its sell limits and stops trading for good. It stays stopped across restarts and new days. Withdrawals lower equity too, so they count toward the drawdown.
+- **Spread Monitoring**: Spread checked before each signal
+- **Error Handling**: Failed orders and data errors are logged
+
+### Resetting the Kill Switch
+The kill switch only resets by hand. In MetaTrader 5 open Tools → Global Variables (F3) and delete both `EA_<login>_<symbol>_<magic>_KillSwitch` and `EA_<login>_<symbol>_<magic>_PeakEquity`, then restart the EA. Deleting only the first one trips it again straight away, because the old peak is still stored.
 
 ### Trade Management
 - **Breakeven Automation**: SL moved to entry when 1:1 R:R achieved
-- **Position Monitoring**: Real-time position tracking
 - **Risk-Reward Validation**: Ensures minimum R:R before execution
-- **Duplicate Prevention**: Prevents multiple orders on same signal
+- **Duplicate Prevention**: One open position or resting sell limit at a time
 
 ## ⚙️ Customization
 
@@ -182,11 +182,7 @@ config.save_config()
 ```
 
 ### Supported Customizations
-- **Risk Parameters**: Risk amount, daily limits, R:R ratios
-- **Technical Indicators**: MACD periods, lookback periods
-- **Symbol Configuration**: Add/remove trading pairs
-- **Timeframes**: Modify for different chart periods
-- **Logging**: Detailed logging levels and options
+The EA is configured through its input parameters only (see the table above). MACD periods, timeframe, maximum spread and the 5% risk cap are fixed in `bot.mq5`. The symbol, timeframe and indicator fields in `config.json` are read by the Python scripts, not the EA.
 
 ## 📈 Testing & Validation
 
@@ -195,9 +191,9 @@ config.save_config()
 2. Select Expert Advisor: `bot`
 3. Configure test parameters:
    - Symbol: EURUSD or GBPUSD
-   - Timeframe: M1 (or configured timeframe)
+   - Timeframe: M1
    - Date range: Sufficient historical data
-   - Model: Every tick (most accurate)
+   - Model: Every tick based on real ticks (most accurate for limit order fills)
 4. Set input parameters matching your live configuration
 5. Run backtest and analyze results
 
@@ -209,7 +205,7 @@ python init-test.py
 # Verify account information
 python account-info.py
 
-# Test order functionality
+# Test order functionality (places orders, demo accounts only)
 python test-function.py
 
 # Validate configuration
@@ -244,7 +240,6 @@ Expert-Advisor-trading-bot/
 **Connection Problems**
 - Ensure MetaTrader 5 is running and logged in
 - Check algorithmic trading is enabled
-- Verify DLL imports are allowed
 - Run `python init-test.py` for diagnostics
 
 **Trading Issues**
@@ -261,25 +256,14 @@ Expert-Advisor-trading-bot/
 
 ## 🔒 Security Features
 
-- **Input Validation**: All parameters validated before use
-- **Error Handling**: Comprehensive error detection and logging
-- **Account Protection**: Multiple safety mechanisms
-- **Defensive Coding**: Secure programming practices throughout
-- **No Hardcoded Secrets**: Configuration-based sensitive data
+- **Input Validation**: Key inputs validated on start
+- **Error Handling**: Order and data errors logged
+- **No DLL Imports**: The EA uses only built-in MQL5 functions
 
-## 📊 Monitoring & Analytics
+## 📊 Monitoring
 
-### Real-time Monitoring
-- Account equity and balance tracking
-- Position monitoring and management
-- Spread and market condition analysis
-- Error detection and alerting
-
-### Performance Analytics
-- Trade history analysis
-- Risk metrics calculation
-- Drawdown monitoring
-- Profit/loss tracking
+- EA activity, orders and errors are logged to the MT5 Experts tab when `EnableLogging` is on
+- `python account-info.py` prints account balance, equity and margin status
 
 ## 🤝 Contributing
 
