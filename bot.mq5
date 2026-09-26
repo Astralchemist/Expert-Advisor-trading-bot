@@ -543,11 +543,13 @@ void ManagePositions()
             
             if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
               {
-               double riskDistance = openPrice - stopLoss;
+               // A sell's stop loss sits above the entry
+               double riskDistance = stopLoss - openPrice;
                double currentProfit = openPrice - currentPrice;
-               
+
                // Move SL to breakeven when 1:1 RR is reached
-               if(currentProfit >= riskDistance && stopLoss != openPrice)
+               // (riskDistance <= 0 means no SL or already at breakeven)
+               if(riskDistance > 0 && currentProfit >= riskDistance)
                  {
                   MqlTradeRequest request = {};
                   MqlTradeResult result = {};
