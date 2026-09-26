@@ -25,6 +25,24 @@ def validate_symbol(symbol):
     
     return True
 
+def is_demo_account():
+    """
+    Check that the logged-in account is a demo account
+
+    Returns:
+        bool: True if the account is a demo account, False otherwise
+    """
+    account_info = mt5.account_info()
+    if account_info is None:
+        print(f"Failed to get account info: {mt5.last_error()}")
+        return False
+
+    if account_info.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+        print(f"Account {account_info.login} is not a demo account. Test orders are only placed on demo accounts")
+        return False
+
+    return True
+
 def calculate_safe_lot_size(symbol, risk_amount, stop_loss_pips):
     """
     Calculate lot size based on risk amount and stop loss
@@ -84,7 +102,11 @@ def place_test_order(symbol="EURUSD", order_type="BUY", risk_amount=50.0):
         if not mt5.initialize():
             print(f"Failed to initialize MT5: {mt5.last_error()}")
             return False
-        
+
+        # Refuse to place real orders on a live account
+        if not is_demo_account():
+            return False
+
         # Validate symbol
         if not validate_symbol(symbol):
             return False

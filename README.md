@@ -95,7 +95,7 @@ pip install MetaTrader5
 ### Quick Start
 1. **Initialize Connection**: Run `python mt5-init.py` to establish MT5 connection
 2. **Verify Account**: Run `python account-info.py` to check account status
-3. **Test Functionality**: Run `python test-function.py` to test order placement. **This places real market orders (a BUY on EURUSD and a SELL on GBPUSD) on whichever account is logged in. Use a demo account.**
+3. **Test Functionality**: Run `python test-function.py` to test order placement. **This places market orders (a BUY on EURUSD and a SELL on GBPUSD), so it refuses to run unless the logged-in account is a demo account.**
 4. **Attach EA**: Add Expert Advisor to your trading chart
 
 ### Expert Advisor Parameters
@@ -205,7 +205,7 @@ python init-test.py
 # Verify account information
 python account-info.py
 
-# Test order functionality (places real orders, use a demo account)
+# Test order functionality (places orders, demo accounts only)
 python test-function.py
 
 # Validate configuration
