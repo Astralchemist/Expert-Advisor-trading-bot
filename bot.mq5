@@ -341,8 +341,8 @@ void SetSellLimit(double support, double resistance)
    request.tp = takeProfit;
    request.magic = MagicNumber;
    request.comment = "EA Sell Limit";
-   request.type_filling = ORDER_FILLING_IOC;
-   
+   request.type_filling = GetFillingMode();
+
    // Send order
    if(!OrderSend(request, result))
      {
@@ -355,6 +355,20 @@ void SetSellLimit(double support, double resistance)
       if(EnableLogging)
          Print("Sell limit order placed. Ticket: ", result.order, ", Entry: ", entryPrice, ", SL: ", stopLoss, ", TP: ", takeProfit);
      }
+  }
+//+------------------------------------------------------------------+
+//| Function to pick a filling mode the broker allows for the symbol |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING GetFillingMode()
+  {
+   long filling = SymbolInfoInteger(Symbol(), SYMBOL_FILLING_MODE);
+
+   // Keep IOC where the broker allows it, else fall back
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      return ORDER_FILLING_IOC;
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      return ORDER_FILLING_FOK;
+   return ORDER_FILLING_RETURN;
   }
 //+------------------------------------------------------------------+
 //| Function to calculate lot size based on risk with validation     |
