@@ -7,11 +7,13 @@ input int LookbackPeriod = 20;         // Candles to analyze for S/R zones
 input double MinRiskReward = 2.0;      // Minimum risk:reward ratio
 input int MagicNumber = 234567;        // Unique EA identifier
 input bool EnableLogging = true;       // Enable detailed logging
+input int PendingExpiryMinutes = 30;   // Cancel unfilled sell limits after this many minutes
 
 //+------------------------------------------------------------------+
 //| Global Variables                                                 |
 //+------------------------------------------------------------------+
 double dailyStartBalance;
+datetime dailyStartDay = 0;
 bool tradingEnabled = true;
 int macdHandle;
 datetime lastTradeTime = 0;
@@ -31,9 +33,10 @@ int OnInit()
    
    // Store daily start balance
    dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   
+   dailyStartDay = CurrentServerDay();
+
    // Validate inputs
-   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0)
+   if(RiskAmount <= 0 || MaxDailyLoss <= 0 || MinRiskReward <= 1.0 || PendingExpiryMinutes <= 0)
      {
       Print("Invalid input parameters");
       return(INIT_FAILED);
@@ -56,25 +59,37 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
+   // Start a new daily loss window when the server day rolls over
+   ResetDailyBalanceIfNewDay();
+
    // Check daily loss limit
    if(!CheckDailyLossLimit())
      {
       tradingEnabled = false;
+      // Resting sell limits could still fill after the limit is hit
+      DeletePendingOrders(0);
       return;
      }
-   
+
    // Check if trading is enabled
    if(!tradingEnabled)
       return;
-   
+
+   // Cancel sell limits that have been resting too long
+   DeletePendingOrders(PendingExpiryMinutes * 60);
+
    // Prevent multiple trades in same minute
    if(TimeCurrent() - lastTradeTime < 60)
       return;
-   
+
    // Check for existing positions to avoid duplicates
    if(PositionsTotal() > 0)
       return;
-   
+
+   // Check for a resting sell limit to avoid stacking pending orders
+   if(CountPendingOrders() > 0)
+      return;
+
    // Check spread
    if(!IsSpreadAcceptable())
       return;
@@ -409,6 +424,78 @@ bool CheckDailyLossLimit()
      }
    
    return true;
+  }
+//+------------------------------------------------------------------+
+//| Function to get the start of the current server day              |
+//+------------------------------------------------------------------+
+datetime CurrentServerDay()
+  {
+   return (datetime)((long)TimeCurrent() / 86400 * 86400);
+  }
+//+------------------------------------------------------------------+
+//| Function to reset daily start balance on a new server day        |
+//+------------------------------------------------------------------+
+void ResetDailyBalanceIfNewDay()
+  {
+   datetime today = CurrentServerDay();
+   if(today == dailyStartDay)
+      return;
+
+   dailyStartDay = today;
+   dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   tradingEnabled = true;
+
+   if(EnableLogging)
+      Print("New trading day. Daily start balance reset to ", dailyStartBalance);
+  }
+//+------------------------------------------------------------------+
+//| Function to count this EA's pending orders on the current symbol |
+//+------------------------------------------------------------------+
+int CountPendingOrders()
+  {
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0 &&
+         OrderGetString(ORDER_SYMBOL) == Symbol() &&
+         OrderGetInteger(ORDER_MAGIC) == MagicNumber)
+         count++;
+     }
+   return count;
+  }
+//+------------------------------------------------------------------+
+//| Function to delete this EA's pending orders older than a limit   |
+//| (pass 0 to delete all of them)                                   |
+//+------------------------------------------------------------------+
+void DeletePendingOrders(int olderThanSeconds)
+  {
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 ||
+         OrderGetString(ORDER_SYMBOL) != Symbol() ||
+         OrderGetInteger(ORDER_MAGIC) != MagicNumber)
+         continue;
+
+      datetime setupTime = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
+      if(TimeCurrent() - setupTime < olderThanSeconds)
+         continue;
+
+      MqlTradeRequest request = {};
+      MqlTradeResult result = {};
+
+      request.action = TRADE_ACTION_REMOVE;
+      request.order = ticket;
+
+      if(!OrderSend(request, result))
+        {
+         if(EnableLogging)
+            Print("Failed to delete pending order ", ticket, ". Error: ", GetLastError(), ", Retcode: ", result.retcode);
+        }
+      else if(EnableLogging)
+         Print("Pending order deleted: ", ticket);
+     }
   }
 //+------------------------------------------------------------------+
 //| Function to check if spread is acceptable                       |
